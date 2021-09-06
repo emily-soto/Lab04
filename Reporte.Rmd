@@ -1,0 +1,179 @@
+---
+title: "Reporte"
+author: "EmilySoto"
+date: "6/9/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(readr)
+library(dplyr)
+library(highcharter)
+library(tidyverse)
+library(knitr)
+library(ggplot2)
+```
+
+```{r  include=FALSE}
+df<- read_csv("tabla_completa.csv", locale = locale(encoding = "Latin1"), col_types = cols(MES = col_number()))
+```
+
+## Assumptions
+1. El df es de un solo producto
+
+```{r, echo=FALSE}
+(unique(df$Q/df$CANTIDAD))
+```
+2. Los clientes con "faltante" son ordenes que faltaron en despachos anteriores
+3. Los clientes con "Devolución" representan salida de dinero ya que son devoluciones
+```{r, echo=FALSE}
+df$CANTIDAD=ifelse(test = str_detect(df$CLIENTE, "DEVOLUCION")==TRUE, yes = df$CANTIDAD*-1, no=df$CANTIDAD*1)
+df$Q=ifelse(test = str_detect(df$CLIENTE, "DEVOLUCION")==TRUE, yes = df$Q*-1, no=df$Q*1)
+kable(df[str_detect(df$CLIENTE, "DEVOLUCION"),][1:8,])
+```
+
+## Análisis preliminar
+
+Haciendo una breve exploración del dataset, se encontró algunos highlights que se resumen en:
+
+#### 1. Estado de entrega
+Hay 3 estados de despacho:   Faltante|Despacho a cliente |DEVOLUCION
+```{r, echo=FALSE}
+kable(df[str_detect(df$CLIENTE, "Faltante|Despacho a cliente |DEVOLUCION"),][1:10,])
+```
+#### 2. Clientes
+Hay un total de 13 clientes activos
+```{r, echo=FALSE}
+df %>% 
+  group_by(CLIENTE) %>% 
+  summarise(n_distinct())
+```
+#### 3. Opción de crédito
+Actualmente la empresa otorga hasta tres meses de crédito
+```{r, echo=FALSE}
+
+```
+```{r, echo=FALSE}
+##Entrada de dinero mensual
+df$FlujoMes=df$MES+df$CREDITO/30
+FCmensual=df %>% 
+  group_by(FlujoMes) %>% 
+  summarise(FlujoMensual=sum(Q))
+
+FCmensual %>% 
+  filter(FlujoMes<13) %>% 
+  hchart("line",hcaes(x=FlujoMes, y=FlujoMensual)) %>% 
+  hc_title(text="<b>Flujo neto durante el año<b>")
+
+df %>%
+  group_by(CREDITO) %>%
+  summarise(Entregas=n())
+
+df %>%
+  group_by(Dias=as.character(CREDITO)) %>%
+  summarise(Porcentaje=100*n()/nrow(df)) %>% 
+  hchart("column",hcaes(x=Dias, y=Porcentaje)) %>% 
+  hc_title(text="<b>Dias de credito<b>")
+```
+El 30% de las ventas se realizan con un crédito de 90 días, lo que ocasiona que algunos flujos se reciban hasta el próximo año
+
+```{r, echo=FALSE}
+#"Ingresos no recibidos en el año
+Flujo2018= df %>% 
+  group_by(SiguienteAnio=FlujoMes>12) %>%
+  summarise(FlujoMensual=sum(Q), Porcentaje=100*(FlujoMensual/sum(df$Q))) 
+
+Flujo2018$SiguienteAnio=ifelse(test = Flujo2018$SiguienteAnio==TRUE, yes = 2018, no = 2017)
+
+FCmensual=df %>% 
+  group_by(FlujoMes) %>% 
+  summarise(FlujoMensual=sum(Q))
+
+flujos=Flujo2018 %>% 
+  hchart("column",hcaes(x=SiguienteAnio, y=Porcentaje)) %>% 
+  hc_title(text="<b>Flujo neto por anio<b>")
+(flujos)
+```
+#### 4. Pilotos
+Hay 9 pilotos activos dentro de la empresa
+```{r, echo=FALSE}
+(df %>% 
+  group_by(PILOTO) %>% 
+  summarise(FlujoMensual=sum(Q)))
+```
+Cada uno coloca dentro de 50K-70K quetzales
+```{r, echo=FALSE}
+df %>%
+  group_by(PILOTO) %>%
+  summarise(QenOrdenes=sum(Q)) %>% 
+  hchart("column",hcaes(x=PILOTO, y=QenOrdenes)) %>% 
+  hc_title(text="<b>Q por Piloto<b>")
+```
+Y en promedio, cada uno hace 20 entregas mensuales
+```{r, echo=FALSE}
+df %>% 
+  group_by(FlujoMes, PILOTO) %>% 
+  summarise(FlujoMensual=sum(Q)) %>% 
+  hchart("scatter",hcaes(FlujoMes, y=FlujoMensual, group=PILOTO)) %>% 
+  hc_title(text="<b>Monto despachado mensual por piloto<b>")
+
+ordenesMes=df %>%
+  group_by(PILOTO) %>%
+  summarise(OrdenesMensuales=n()/12) 
+ggplot(ordenesMes) +
+  geom_col(aes(x=PILOTO, y=OrdenesMensuales,fill=PILOTO ))+
+  geom_hline(data = ordenesMes, aes(yintercept = mean(OrdenesMensuales), color = "red"))+
+  scale_fill_brewer(palette="Spectral")+
+  ggtitle("Entregas mensuales por piloto")
+```
+
+#### 5. Vehículos
+La mayor parte de los despachos se hace con camión grande
+
+```{r, echo=FALSE}
+df %>% 
+  group_by(UNIDAD) %>% 
+  summarise(activos=n()) %>% 
+  hchart("column", hcaes(x = UNIDAD, y = activos)) %>%
+  hc_title(text = "Distribución entregas por Vehículos")
+```
+
+La mayoría de entregas faltantes terminan siendo despachadas con camiones grandes
+```{r, echo=FALSE}
+faltantes=df %>% group_by(CLIENTE,UNIDAD) %>%
+  summarise(Monto=sum(Q)) %>% 
+  filter(str_detect(CLIENTE, "Faltante")==TRUE)
+
+faltantes %>% 
+  hchart('column', hcaes(x = 'CLIENTE', y = 'Monto', group = "UNIDAD")) %>% 
+  hc_title(text = "Distribución entregas faltantes por tipo de vehículo")
+```
+
+## Conclusiones
+
+#### 1. Reducir los días de crédito para clientes poco recurrentes/fieles, ya que esto afecta el flujo de caja del YTG
+#### 2. Brindar incentivos para los pilotos y mejorar las entregas, es decir, reducir los despachos por faltantes
+#### 3. Hacer Watch out con pilotos que están muy por debajo del promedio de entregas mensuales
+#### 4. Adquirir más camiones grandes para que el primer despacho sea en estos y evitar el costo que implica volver a mandar un despacho faltante
+#### 5. Administrar la relación que se tiene con el "El gallo negro" ya que todos los despachos del 2017 fueron de devoluciones
+
+## PARETO
+
+```{r, echo=FALSE}
+clientes=df %>% 
+  group_by(CLIENTE) %>% 
+  summarise(monto=sum(Q),pedidos=n())
+cliente=clientes$CLIENTE
+cliente=gsub("\\|.*","",cliente)
+cliente=gsub("\\/.*","",cliente)
+clientes$CLIENTE=cliente
+clientes=clientes %>% 
+  group_by(CLIENTE) %>% 
+  summarise(monto=sum(monto), pedidos=sum(pedidos))
+clientes$monto=clientes$monto/100
+
+ggplot(clientes) +
+  geom_bar(aes(x=CLIENTE,y=pedidos), fill='blue', stat="identity") +
+  geom_point(aes(x=CLIENTE,y=monto), color = rgb(0, 1, 0), pch=16, size=1) +
+  geom_path(aes(x=CLIENTE,y=monto, group=1), colour="slateblue1", lty=3, size=0.9)+theme(axis.text.x = element_text(angle=90, vjust=0.6)) 
+```
